@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<head>
+	<meta http-equiv="Content-type" content="text/html; charset=utf-8">
+	<title>Gantt chart with resource panel</title>
+
+	<script src="../../codebase/dhtmlxgantt.js?v=7.1.3"></script>
+	<script src="../common/testdata.js?v=7.1.3"></script>
+	<link rel="stylesheet" href="../../codebase/dhtmlxgantt.css?v=7.1.3">
+	<link rel="stylesheet" href="../common/controls_styles.css?v=7.1.3">
+	<script src="./data.js?v=7.1.3"></script>
+	<script src="https://unpkg.com/jalali-moment/dist/jalali-moment.browser.js"></script>
+
+
+	<style>
+		html, body {
+			padding: 0px;
+			margin: 0px;
+			height: 100%;
+		}
+
+		.gantt_grid_scale .gantt_grid_head_cell,
+		.gantt_task .gantt_task_scale .gantt_scale_cell {
+			font-weight: bold;
+			font-size: 14px;
+			color: rgba(0, 0, 0, 0.7);
+		}
+
+	</style>
+</head>
+<body>
+<div class="gantt_control">
+	<button class='zoom_toggle' onclick="toggleMode(this)">Zoom to Fit</button>
+	<input type=button value="Zoom In" onclick="zoom_in();">
+	<input type=button value="Zoom Out" onclick="zoom_out();">
+</div>
+<div id="gantt_here" style='width:100%; height:calc(100vh - 52px); position: relative;'></div>
+<script>
+
+	function calculateResourceLoad(tasks, scale) {
+		var step = scale.unit;
+		var timegrid = {};
+
+		for (var i = 0; i < tasks.length; i++) {
+			var task = tasks[i];
+
+			var currDate = gantt.date[step + "_start"](new Date(task.start_date));
+
+			while (currDate < task.end_date) {
+
+				var date = currDate;
+				currDate = gantt.date.add(currDate, 1, step);
+
+				if (!gantt.isWorkTime({date: date, task: task})) {
+					continue;
+				}
+
+				var timestamp = date.valueOf();
+				if (!timegrid[timestamp])
+					timegrid[timestamp] = 0;
+
+				timegrid[timestamp] += 8;
+			}
+		}
+
+		var timetable = [];
+		var start, end;
+		for (var i in timegrid) {
+			start = new Date(i * 1);
+			end = gantt.date.add(start, 1, step);
+			timetable.push({
+				start_date: start,
+				end_date: end,
+				value: timegrid[i]
+			});
+		}
+
+		return timetable;
+	}
+
+
+	var renderResourceLine = function (resource, timeline) {
+		var tasks = gantt.getTaskBy("user", resource.id);
+		var timetable = calculateResourceLoad(tasks, timeline.getScale());
+
+		var row = document.createElement("div");
+
+		for (var i = 0; i < timetable.length; i++) {
+
+			var day = timetable[i];
+
+			var css = "";
+			if (day.value <= 8) {
+				css = "gantt_resource_marker gantt_resource_marker_ok";
+			} else {
+				css = "gantt_resource_marker gantt_resource_marker_overtime";
+			}
+
+			var sizes = timeline.getItemPosition(resource, day.start_date, day.end_date);
+			var el = document.createElement('div');
+			el.className = css;
+
+			el.style.cssText = [
+				'left:' + sizes.left + 'px',
+				'width:' + sizes.width + 'px',
+				'position:absolute',
+				'height:' + (gantt.config.row_height - 1) + 'px',
+				'line-height:' + sizes.height + 'px',
+				'top:' + sizes.top + 'px'
+			].join(";");
+
+			el.innerHTML = day.value;
+			row.appendChild(el);
+		}
+		return row;
+	};
+
+	var resourceLayers = [
+		renderResourceLine,
+		"taskBg"
+	];
+
+	var mainGridConfig = {
+		columns: [
+			{name: "text", tree: true, width: 200, resize: true},
+			{name: "start_date", align: "center", width: 80, resize: true},
+			{
+				name: "owner", align: "center", width: 60, label: "Owner", template: function (task) {
+					var store = gantt.getDatastore("resources");
+					var owner = store.getItem(task.user);
+					if (owner) {
+						return owner.label;
+					} else {
+						return "N/A";
+					}
+				}
+			},
+			{name: "duration", width: 50, align: "center"},
+			{name: "add", width: 44}
+		]
+	};
+
+	var resourcePanelConfig = {
+		columns: [
+			{
+				name: "name", label: "Name", template: function (resource) {
+					return resource.label;
+				}
+			},
+			{
+				name: "workload", label: "Workload", template: function (resource) {
+					var tasks = gantt.getTaskBy("user", resource.id);
+
+					var totalDuration = 0;
+					for (var i = 0; i < tasks.length; i++) {
+						totalDuration += tasks[i].duration;
+					}
+
+					return (totalDuration || 0) * 8 + "";
+				}
+			}
+		]
+	};
+
+	gantt.config.layout = {
+		css: "gantt_container",
+		rows: [
+			{
+				cols: [
+					{view: "grid", group:"grids", config: mainGridConfig, scrollY: "scrollVer"},
+					{resizer: true, width: 1, group:"vertical"},
+					{view: "timeline", id: "timeline", scrollX: "scrollHor", scrollY: "scrollVer"},
+					{view: "scrollbar", id: "scrollVer", group:"vertical"}
+				]
+			},
+			{resizer: true, width: 1},
+			{
+				config: resourcePanelConfig,
+				cols: [
+					{
+						view: "grid",
+						id: "resourceGrid",
+						group:"grids",
+						bind: "resources",
+						scrollY: "resourceVScroll"
+					},
+					{resizer: true, width: 1, group:"vertical"},
+					{
+						view: "timeline",
+						id: "resourceTimeline",
+						bind: "resources",
+						bindLinks: null,
+						layers: resourceLayers,
+						scrollX: "scrollHor",
+						scrollY: "resourceVScroll"
+					},
+					{view: "scrollbar", id: "resourceVScroll", group:"vertical"}
+				]
+			},
+			{view: "scrollbar", id: "scrollHor"}
+		]
+	};
+
+	var resourcesStore = gantt.createDatastore({
+		name: "resources",
+		initItem: function (item) {
+			item.id = item.key || gantt.uid();
+			return item;
+		}
+	});
+
+	var tasksStore = gantt.getDatastore("task");
+	tasksStore.attachEvent("onStoreUpdated", function (id, item, mode) {
+		resourcesStore.refresh();
+	});
+
+	// gantt.init("gantt_here");
+
+	resourcesStore.parse([// resources
+		{key: '0', label: "N/A"},
+		{key: '1', label: "John"},
+		{key: '2', label: "Mike"},
+		{key: '3', label: "Anna"}
+	]);
+
+
+</script>
+<script>
+
+	function toggleMode(toggle) {
+		gantt.$zoomToFit = !gantt.$zoomToFit;
+		if (gantt.$zoomToFit) {
+			toggle.innerHTML = "Set default Scale";
+			//Saving previous scale state for future restore
+			saveConfig();
+			zoomToFit();
+		} else {
+
+			toggle.innerHTML = "Zoom to Fit";
+			//Restore previous scale state
+			restoreConfig();
+			gantt.render();
+		}
+	}
+
+	var cachedSettings = {};
+
+	function saveConfig() {
+		var config = gantt.config;
+		cachedSettings = {};
+		cachedSettings.scales = config.scales;
+		cachedSettings.start_date = config.start_date;
+		cachedSettings.end_date = config.end_date;
+		cachedSettings.scroll_position = gantt.getScrollState();
+	}
+
+	function restoreConfig() {
+		applyConfig(cachedSettings);
+	}
+
+	function applyConfig(config, dates) {
+
+		gantt.config.scales = config.scales;
+		var lowest_scale = config.scales.reverse()[0];
+
+		if (dates && dates.start_date && dates.end_date) {
+			gantt.config.start_date = gantt.date.add(dates.start_date, -1, lowest_scale.unit);
+			gantt.config.end_date = gantt.date.add(gantt.date[lowest_scale.unit + "_start"](dates.end_date), 2, lowest_scale.unit);
+		} else {
+			gantt.config.start_date = gantt.config.end_date = null;
+		}
+
+		// restore the previous scroll position
+		if (config.scroll_position) {
+			setTimeout(function(){
+				gantt.scrollTo(config.scroll_position.x, config.scroll_position.y)
+			},4)
+		}
+	}
+
+
+	function zoomToFit() {
+		var project = gantt.getSubtaskDates(),
+				areaWidth = gantt.$task.offsetWidth,
+				scaleConfigs = zoomConfig.levels;
+
+		for (var i = 0; i < scaleConfigs.length; i++) {
+			var columnCount = getUnitsBetween(project.start_date, project.end_date, scaleConfigs[i].scales[scaleConfigs[i].scales.length-1].unit, scaleConfigs[i].scales[0].step);
+			if ((columnCount + 2) * gantt.config.min_column_width <= areaWidth) {
+				break;
+			}
+		}
+
+
+		if (i == scaleConfigs.length) {
+			i--;
+		}
+
+		gantt.ext.zoom.setLevel(scaleConfigs[i].name);
+		applyConfig(scaleConfigs[i], project);
+	}
+
+	// get number of columns in timeline
+	function getUnitsBetween(from, to, unit, step) {
+		var start = new Date(from),
+				end = new Date(to);
+		var units = 0;
+		while (start.valueOf() < end.valueOf()) {
+			units++;
+			start = gantt.date.add(start, step, unit);
+		}
+		return units;
+	}
+
+	function zoom_in(){
+		gantt.ext.zoom.zoomIn();
+		gantt.$zoomToFit = false;
+		document.querySelector(".zoom_toggle").innerHTML = "Zoom to Fit";
+	}
+	function zoom_out(){
+		gantt.ext.zoom.zoomOut();
+		gantt.$zoomToFit = false;
+		document.querySelector(".zoom_toggle").innerHTML = "Zoom to Fit";
+	}
+
+
+	var zoomConfig = {
+		levels: [
+			// hours
+			{
+				name:"hour",
+				scale_height: 27,
+				scales:[
+					{unit:"day", step: 1, format:"%d %M"},
+					{unit:"hour", step: 1, format:"%H:%i"},
+				]
+			},
+			// days
+			{
+				name:"day",
+				scale_height: 27,
+				scales:[
+					{unit: "day", step: 1, format: "%d %M"}
+				]
+			},
+			// weeks
+			{
+				name:"week",
+				scale_height: 50,
+				scales:[
+					{unit: "week", step: 1, format: function (date) {
+							var dateToStr = gantt.date.date_to_str("%d %M");
+							var endDate = gantt.date.add(date, -6, "day");
+							var weekNum = gantt.date.date_to_str("%W")(date);
+							return "#" + weekNum + ", " + dateToStr(date) + " - " + dateToStr(endDate);
+						}},
+					{unit: "day", step: 1, format: "%j %D"}
+				]
+			},
+			// months
+			{
+				name:"month",
+				scale_height: 50,
+				scales:[
+					{unit: "month", step: 1, format: "%F, %Y"},
+					{unit: "week", step: 1, format: function (date) {
+							var dateToStr = gantt.date.date_to_str("%d %M");
+							var endDate = gantt.date.add(gantt.date.add(date, 1, "week"), -1, "day");
+							return dateToStr(date) + " - " + dateToStr(endDate);
+						}}
+				]
+			},
+			// quarters
+			{
+				name:"quarter",
+				height: 50,
+				scales:[
+					{
+						unit: "quarter", step: 3, format: function (date) {
+							var dateToStr = gantt.date.date_to_str("%M %y");
+							var endDate = gantt.date.add(gantt.date.add(date, 3, "month"), -1, "day");
+							return dateToStr(date) + " - " + dateToStr(endDate);
+						}
+					},
+					{unit: "month", step: 1, format: "%M"},
+				]
+			},
+			// years
+			{
+				name:"year",
+				scale_height: 50,
+				scales:[
+					{unit: "year", step: 5, format: function (date) {
+							var dateToStr = gantt.date.date_to_str("%Y");
+							var endDate = gantt.date.add(gantt.date.add(date, 5, "year"), -1, "day");
+							return dateToStr(date) + " - " + dateToStr(endDate);
+						}}
+				]
+			},
+			// decades
+			{
+				name:"year",
+				scale_height: 50,
+				scales:[
+					{unit: "year", step: 100, format: function (date) {
+							var dateToStr = gantt.date.date_to_str("%Y");
+							var endDate = gantt.date.add(gantt.date.add(date, 100, "year"), -1, "day");
+							return dateToStr(date) + " - " + dateToStr(endDate);
+						}},
+					{unit: "year", step: 10, format: function (date) {
+							var dateToStr = gantt.date.date_to_str("%Y");
+							var endDate = gantt.date.add(gantt.date.add(date, 10, "year"), -1, "day");
+							return dateToStr(date) + " - " + dateToStr(endDate);
+						}},
+				]
+			},
+		],
+		element: function(){
+			return gantt.$root.querySelector(".gantt_task");
+		}
+	};
+
+
+	gantt.ext.zoom.init(zoomConfig);
+
+	gantt.ext.zoom.setLevel("day");
+
+	gantt.$zoomToFit = false;
+
+	gantt.message({text: "Scale the Gantt chart to make the whole project fit the screen", expire: -1});
+	gantt.init("gantt_here");
+
+
+	gantt.parse(taskData);
+
+
+
+
+
+</script>
+
+</body>
